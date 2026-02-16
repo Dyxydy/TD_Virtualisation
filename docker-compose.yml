@@ -1,0 +1,10 @@
+services:
+  sqldatabase:
+  nosqldatabase:
+  broker:
+  restapi:
+  wsapi:
+  front:
+  webapp:
+  phpmyadmin:
+  mongo-express:
