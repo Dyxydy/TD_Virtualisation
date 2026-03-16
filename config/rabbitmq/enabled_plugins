@@ -1,0 +1,15 @@
+% Ce fichier liste les plugins RabbitMQ à activer au démarrage du conteneur.
+% Il est monté en lecture seule via une Docker Config (pas un secret car il
+% ne contient PAS de credentials, seulement la liste des plugins).
+%
+% Format Erlang (liste d'atomes entre crochets, terminée par un point) :
+%
+%   rabbitmq_management : active l'interface web d'administration RabbitMQ
+%                         (port 15672) et l'API HTTP de management.
+%                         Utile pour le monitoring et le debugging en prod.
+%
+%   rabbitmq_stomp      : active le protocole STOMP sur le port 61613.
+%                         Requis par la RealtimeApi (Spring WebSocket/STOMP)
+%                         pour la communication temps réel avec le broker.
+%                         Voir : README RealtimeAPI, section "RabbitMQ configuration".
+[rabbitmq_management,rabbitmq_stomp].
