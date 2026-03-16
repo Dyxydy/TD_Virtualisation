@@ -1,0 +1,73 @@
+version: "3.9"
+
+services:
+
+#####API#####
+
+  restapi:
+    build: ./restapi
+    container_name: restapi
+    ports:
+      - "5001:5001"
+    depends_on:
+      sqldatabase:
+        condition: service_started
+      nosqldatabase:
+        condition: service_started
+    restart: unless-stopped
+
+  wsapi:
+    image: maven:3.9-eclipse-temurin-21
+    container_name: wsapi
+    working_dir: /app
+    volumes:
+      - ../RealtimeApi:/app
+      - ./volumes/maven-cache:/root/.m2
+      - ./volumes/wsapi-target:/app/target
+    command: mvn spring-boot:run
+    ports:
+      - "8080:8080"
+    depends_on:
+      sqldatabase:
+        condition: service_started
+      nosqldatabase:
+        condition: service_started
+      broker:
+        condition: service_started
+    restart: unless-stopped
+
+  webapp:
+    image: node:22
+    profiles:
+      - builder
+    working_dir: /app
+    volumes:
+      - ../app:/app
+      - ./volumes/webapp-build:/app/dist
+    command: sh -c "npm install && npm run build"
+
+#####BDD#####
+
+  sqldatabase:
+    image: mariadb:11
+    container_name: sqldatabase
+    environment:
+      MYSQL_DATABASE: logisticotrain
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+    volumes:
+      - ./volumes/mariadb-data:/var/lib/mysql
+    restart: unless-stopped
+
+  nosqldatabase:
+    image: mongo:6
+    container_name: nosqldatabase
+    volumes:
+      - ./volumes/mongo-data:/data/db
+    restart: unless-stopped
+
+  broker:
+    image: rabbitmq:3.12-management
+    container_name: broker
+    ports:
+      - "15672:15672"
+    restart: unless-stopped
