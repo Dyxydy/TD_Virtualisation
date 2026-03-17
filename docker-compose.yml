@@ -5,20 +5,18 @@ services:
 #####API#####
 
   restapi:
-    build: ./restapi
-    container_name: restapi
+    build: ./RESTApi
     ports:
       - "5001:5001"
     depends_on:
       sqldatabase:
-        condition: service_started
+        condition: service_healthy
       nosqldatabase:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
 
   wsapi:
     image: maven:3.9-eclipse-temurin-21
-    container_name: wsapi
     working_dir: /app
     volumes:
       - ../RealtimeApi:/app
@@ -29,11 +27,11 @@ services:
       - "8080:8080"
     depends_on:
       sqldatabase:
-        condition: service_started
+        condition: service_healthy
       nosqldatabase:
-        condition: service_started
+        condition: service_healthy
       broker:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
 
   webapp:
@@ -50,24 +48,36 @@ services:
 
   sqldatabase:
     image: mariadb:11
-    container_name: sqldatabase
     environment:
       MYSQL_DATABASE: logisticotrain
-      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+      MYSQL_ROOT_PASSWORD: root
     volumes:
       - ./volumes/mariadb-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
     restart: unless-stopped
 
   nosqldatabase:
     image: mongo:6
-    container_name: nosqldatabase
     volumes:
       - ./volumes/mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.runCommand({ ping: 1 })"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
     restart: unless-stopped
 
   broker:
     image: rabbitmq:3.12-management
-    container_name: broker
     ports:
       - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
     restart: unless-stopped
