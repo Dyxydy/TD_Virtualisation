@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 services:
 
 ##### API #####
@@ -6,11 +7,281 @@ services:
     build: ./RESTApi
     ports:
       - "5001:5001"
+=======
+# =============================================================================
+# docker-compose.yml - Déploiement PRODUCTION Logistico-Train
+# =============================================================================
+# Auteur(s) : Baptiste (Membre 1 - Infra/DB Lead)
+#
+# Pour démarrer la pile complète :
+#   docker compose up -d
+#
+# Pour builder l'application cliente React (séparé, profil "build") :
+#   docker compose --profile build run --rm webapp
+#
+# Pour lancer les outils d'administration BDs (profil "dev-tool") :
+#   docker compose --profile dev-tool up -d phpmyadmin mongo-express
+#
+# =============================================================================
+
+services:
+
+  # ===========================================================================
+  # SQLDATABASE - Base de données relationnelle de PRODUCTION (MariaDB 11)
+  # ===========================================================================
+  # Rôle : stocke le modèle de production (voies, rames en attente ou en cours
+  #        de maintenance, tâches restantes). Base relationnelle SQL.
+  # Utilisé par : restapi, wsapi
+  # ===========================================================================
+  sqldatabase:
+
+    # Image officielle MariaDB version 11 (CDC : "MariaDB version 11 minimum").
+    image: mariadb:11
+
+    # Politique de redémarrage automatique (CDC : "politique de redémarrage
+    # automatique sur les bases de données"). unless-stopped = redémarre toujours
+    # sauf si on l'arrête explicitement avec `docker compose stop`.
+    restart: unless-stopped
+
+    # Réseau(x) auxquel(s) appartient ce service.
+    # db_network : réseau isolé réservé aux bases de données et aux APIs.
+    # Isolation réseau CDC : seuls les services ayant besoin des BDs
+    # sont dans ce réseau (restapi, wsapi, outils dev-tool).
+    networks:
+      - db_network
+
+    volumes:
+      # Volume nommé pour la PERSISTANCE des données MariaDB.
+      # /var/lib/mysql = répertoire de données de MariaDB dans le conteneur.
+      # Pas de volume anonyme (CDC : "Aucun volume de données anonyme ne doit
+      # être créé").
+      - mariadb_data:/var/lib/mysql
+
+      # Script d'initialisation du schéma SQL (tables voie, rames, taches).
+      # Monté en lecture seule (:ro) : sqldatabase n'a pas besoin d'écrire dedans.
+      # Exécuté automatiquement au PREMIER démarrage du conteneur si /var/lib/mysql
+      # est vide (mécanisme docker-entrypoint-initdb.d de l'image MariaDB).
+      - ./config/mariadb/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+    secrets:
+      # Les 4 secrets MariaDB sont lus par l'entrypoint de l'image via les
+      # variables d'environnement *_FILE ci-dessous (feature native de l'image).
+      - mariadb_root_password  # mot de passe du compte root MariaDB
+      - mariadb_user           # nom de l'utilisateur applicatif
+      - mariadb_password       # mot de passe de l'utilisateur applicatif
+      - mariadb_database       # nom de la base de données à créer
+
+    environment:
+      # Convention de l'image MariaDB officielle : les variables suffixées _FILE
+      # indiquent à l'entrypoint le chemin du fichier secret à lire.
+      # Cela évite d'écrire les credentials en clair dans docker-compose.yml.
+      #
+      # MARIADB_ROOT_PASSWORD_FILE : mot de passe du superutilisateur MariaDB root.
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/mariadb_root_password
+      # MARIADB_USER_FILE + MARIADB_PASSWORD_FILE : crée l'utilisateur applicatif
+      # avec GRANT ALL PRIVILEGES sur la base MARIADB_DATABASE.
+      MARIADB_USER_FILE:          /run/secrets/mariadb_user
+      MARIADB_PASSWORD_FILE:      /run/secrets/mariadb_password
+      # MARIADB_DATABASE_FILE : crée la base de données au premier démarrage.
+      MARIADB_DATABASE_FILE:      /run/secrets/mariadb_database
+
+    # ---- Vérification de santé ----
+    # CDC : "vérification de santé sur les bases de données [...] toutes les
+    # 10 secondes, 10 secondes avant échéc, 10 tentatives max".
+    #
+    # healthcheck.sh est le script fourni par l'image MariaDB officielle.
+    # --connect        : vérifie qu'une connexion TCP peut être établie.
+    # --innodb_initialized : vérifie qu'InnoDB (moteur de stockage) est prêt,
+    #                        pas seulement que le processus tourne.
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s    # fréquence des vérifications
+      timeout:  10s    # durée max d'une vérification avant échec
+      retries:  10     # nombre d'échecs consécutifs avant "unhealthy"
+      start_period: 30s  # délai de grâce au démarrage (évite faux positifs)
+
+
+  # ===========================================================================
+  # NOSQLDATABASE - Base de données d'historique orientée document (MongoDB 6.0)
+  # ===========================================================================
+  # Rôle : stocke le modèle d'historique (chaque action sur les rames :
+  #        demande, entrée, rejet, réalisation/ajout de tâches, sortie).
+  #        Chaque document est horodaté et comporte l'auteur de l'action.
+  # Utilisé par : restapi, wsapi
+  # ===========================================================================
+  nosqldatabase:
+
+    # Image officielle MongoDB version 6.0
+    # (CDC : "MongoDB version 4.4 minimum, ≥6.0 recommandé").
+    image: mongo:6.0
+
+    # Redémarrage automatique (CDC).
+    restart: unless-stopped
+
+    networks:
+      # Même réseau isolé que MariaDB : seuls restapi et wsapi y accèdent.
+      - db_network
+
+    volumes:
+      # Volume nommé pour la PERSISTANCE des données MongoDB.
+      # /data/db = répertoire de données MongoDB dans le conteneur.
+      - mongodb_data:/data/db
+
+      # Script d'initialisation MongoDB (création de l'utilisateur applicatif
+      # dans la base "history-db"). Monté en lecture seule.
+      # Exécuté une seule fois au premier démarrage via docker-entrypoint-initdb.d/.
+      # Les scripts .sh sont sourcés avant les .js par l'entrypoint MongoDB.
+      - ./config/mongodb/init-mongo.sh:/docker-entrypoint-initdb.d/01-init-mongo.sh:ro
+
+    secrets:
+      # Secrets pour le compte root MongoDB (lus par l'entrypoint via *_FILE).
+      - mongo_root_user      # nom du superutilisateur root MongoDB
+      - mongo_root_password  # mot de passe du superutilisateur root
+      # Secrets pour l'utilisateur applicatif (lus par init-mongo.sh).
+      - mongo_app_user       # nom de l'utilisateur applicatif (mongoUsr)
+      - mongo_app_password   # mot de passe de l'utilisateur applicatif
+
+    environment:
+      # Convention de l'image MongoDB officielle : variables *_FILE pour les
+      # credentials du compte root (évite les credentials en clair).
+      MONGO_INITDB_ROOT_USERNAME_FILE: /run/secrets/mongo_root_user
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_root_password
+      # init-mongo.sh lit lui-même mongo_app_user et mongo_app_password
+      # depuis /run/secrets/ (pas de convention *_FILE pour les users perso).
+
+    # ---- Vérification de santé ----
+    # mongosh --eval "db.adminCommand('ping')" : commande ping officielle
+    # MongoDB qui vérifie que le serveur répond aux commandes.
+    # --quiet : supprime la bannière mongosh pour un output propre.
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --eval
+        - "db.adminCommand('ping').ok"
+        - --quiet
+      interval: 10s
+      timeout:  10s
+      retries:  10
+      start_period: 30s
+
+
+  # ===========================================================================
+  # BROKER - Serveur de messagerie temps-réel (RabbitMQ 3.12 + plugin STOMP)
+  # ===========================================================================
+  # Rôle : bus de messages pour la communication temps-réel entre la RealtimeAPI
+  #        et les clients WebSocket (opérateur, conducteurs).
+  #        Le plugin STOMP expose le port 61613 pour les clients STOMP (Spring).
+  # Utilisé par : wsapi uniquement
+  # ===========================================================================
+  broker:
+
+    # Image officielle RabbitMQ 3.12 (CDC : "RabbitMQ version 3.12 minimum").
+    # On utilise la variante de base (sans management embarqué) pour garder
+    # le contrôle sur les plugins activés via le fichier enabled_plugins.
+    image: rabbitmq:3.12
+
+    # Redémarrage automatique (CDC).
+    restart: unless-stopped
+
+    networks:
+      # broker_network : réseau isolé réservé au broker et à wsapi.
+      # Seul wsapi a besoin d'accéder au broker (pas restapi).
+      - broker_network
+
+    volumes:
+      # Volume nommé pour la PERSISTANCE des données RabbitMQ
+      # (queues, échanges, utilisateurs persistés sur disque).
+      # /var/lib/rabbitmq = répertoire de données RabbitMQ dans le conteneur.
+      - rabbitmq_data:/var/lib/rabbitmq
+
+    configs:
+      # enabled_plugins est une CONFIG (pas un secret) car il ne contient
+      # que la liste des plugins à activer, sans credentials.
+      # Il est monté directement à l'emplacement attendu par RabbitMQ.
+      # mode 0440 : lecture seule pour root et groupe (rabbitmq).
+      - source: rabbitmq_enabled_plugins
+        target: /etc/rabbitmq/enabled_plugins
+        mode: 0440
+
+    secrets:
+      # Credentials de l'utilisateur par défaut RabbitMQ (management).
+      # L'image officielle supporte RABBITMQ_DEFAULT_USER_FILE et
+      # RABBITMQ_DEFAULT_PASS_FILE pour éviter les credentials en clair.
+      - broker_user      # → /run/secrets/broker_user
+      - broker_password  # → /run/secrets/broker_password
+
+      # Configuration STOMP : ce fichier CONTIENT les credentials STOMP
+      # (stomp.default_user / stomp.default_pass). Il ne peut pas externaliser
+      # ces valeurs individuellement (format conf RabbitMQ), donc TOUT le fichier
+      # est traité comme un SECRET (règle CDC).
+      # Il est monté directement dans /etc/rabbitmq/conf.d/ (Docker Compose
+      # permet de choisir le chemin cible d'un secret via `target`).
+      - source: rabbitmq_stomp_conf
+        target: /etc/rabbitmq/conf.d/30-stomp.conf
+        mode: 0440
+
+    environment:
+      # Variables *_FILE lues par l'entrypoint de l'image RabbitMQ officielle
+      # pour créer l'utilisateur par défaut sans l'écrire en clair ici.
+      RABBITMQ_DEFAULT_USER_FILE: /run/secrets/broker_user
+      RABBITMQ_DEFAULT_PASS_FILE: /run/secrets/broker_password
+
+    # ---- Vérification de santé ----
+    # rabbitmq-diagnostics check_port_connectivity : vérifie que RabbitMQ écoute
+    # sur ses ports (AMQP, management, STOMP) et répond aux connexions.
+    # Plus complet que `rabbitmqctl status` qui vérifie seulement le process.
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 10s
+      timeout:  10s
+      retries:  10
+      start_period: 30s
+
+
+  # ===========================================================================
+  # RESTAPI - API REST Python Flask (image custom, code source embarqué)
+  # ===========================================================================
+  # CDC : "image embarquant directement le code source applicatif et si possible
+  #        ses fichiers python précompilés" (base de code stable, pas de roadmap).
+  # ===========================================================================
+  restapi:
+
+    # Build de l'image custom depuis le Dockerfile créé dans RESTApi/.
+    # context = dossier envoyé au daemon Docker (source + Dockerfile).
+    build:
+      context: ./LogisticoTrain_codebase/RESTApi
+      dockerfile: Dockerfile
+
+    # Redémarrage automatique (CDC).
+    restart: unless-stopped
+
+    networks:
+      # db_network : accès à sqldatabase (MariaDB) et nosqldatabase (MongoDB).
+      - db_network
+      # app_network : exposé à nginx (front) pour le reverse proxy.
+      - app_network
+
+    secrets:
+      # Le fichier config.py de PRODUCTION est monté en tant que secret sur
+      # /app/config.py, écrasant la config de dev embarquée dans l'image.
+      # target = chemin exact dans le conteneur (hors /run/secrets/).
+      # Tout le fichier est un secret car il contient les credentials BDs.
+      - source: restapi_config
+        target: /app/config.py
+        mode: 0440
+
+    # ---- Dépendances avec condition de santé ----
+    # CDC : "les api REST et Realtime ne doivent se lancer que si les bases de
+    # données sont lancées ET considérées saines".
+    # service_healthy = attendre que le healthcheck soit vert (not just started).
+>>>>>>> Claude
     depends_on:
       sqldatabase:
         condition: service_healthy
       nosqldatabase:
         condition: service_healthy
+<<<<<<< HEAD
     networks:
       - backend
       - frontend
@@ -26,6 +297,73 @@ services:
     command: mvn spring-boot:run
     ports:
       - "8080:8080"
+=======
+
+
+  # ===========================================================================
+  # WSAPI - RealTime API Java Spring (source montée, pas d'image custom)
+  # ===========================================================================
+  # CDC : "Le composant RealtimeApi doit pouvoir être redéployé rapidement suite
+  #        à une modification du code-source : il est conseillé de ne pas faire
+  #        d'image personnalisée, et de monter le code-source par un point de
+  #        montage."
+  # ===========================================================================
+  wsapi:
+
+    # Image stock Maven avec JDK 21 (CDC : "JDK Java 21 minimum et maven 3").
+    # eclipse-temurin est la distribution OpenJDK de référence (AdoptOpenJDK).
+    image: maven:3.9-eclipse-temurin-21
+
+    # Redémarrage automatique (CDC).
+    restart: unless-stopped
+
+    networks:
+      - db_network      # accès à sqldatabase et nosqldatabase
+      - broker_network  # accès au broker RabbitMQ (STOMP)
+      - app_network     # exposé à nginx (front)
+
+    volumes:
+      # Source code monté en lecture-écriture (Maven crée target/ dans le dossier
+      # projet). Le flag rw est nécessaire pour que Maven puisse compiler.
+      - ./LogisticoTrain_codebase/RealtimeAPI:/app:rw
+
+      # Cache Maven (~/.m2) dans un volume nommé PERSISTANT et PERFORMANT.
+      # CDC : "Le service wsapi utilise un cache maven pour compiler son code.
+      #        Il est nécessaire de prévoir un espace de stockage persistant et
+      #        performant à cet effet."
+      # Un volume nommé (vs bind mount) est plus rapide car il évite la couche
+      # de traduction du système de fichiers hôte (important sur Windows/macOS).
+      - maven_cache:/root/.m2
+
+      # Dossier target/ dans un volume nommé PERSISTANT et PERFORMANT.
+      # CDC : "Le service wsapi compile le code source java dans un espace dédié
+      #        (dossier target/). Il est nécessaire de s'assurer que cet espace
+      #        soit également persistant et performant."
+      # Séparer target/ du bind mount source améliore les performances de
+      # compilation (I/O intensif sur les .class et .jar générés).
+      - wsapi_target:/app/target
+
+    secrets:
+      # Le fichier application.properties de PRODUCTION est monté comme secret.
+      # Spring Boot est lancé avec --spring.config.location pour lire ce fichier
+      # au lieu de celui embarqué dans src/main/resources/ (qui est la config dev).
+      - source: wsapi_application_properties
+        target: /run/secrets/wsapi_application.properties
+        mode: 0440
+
+    working_dir: /app
+
+    # Spring Boot est lancé via Maven spring-boot:run.
+    # --spring.config.location pointe vers le fichier de config production (secret).
+    # Les propriétés du secret écrasent celles de src/main/resources/application.properties.
+    command:
+      - mvn
+      - spring-boot:run
+      - -Dspring-boot.run.arguments=--spring.config.location=/run/secrets/wsapi_application.properties
+
+    # ---- Dépendances avec condition de santé ----
+    # CDC : "l'api Realtime doit en plus attendre que le broker soit lancé et sain".
+>>>>>>> Claude
     depends_on:
       sqldatabase:
         condition: service_healthy
@@ -33,6 +371,7 @@ services:
         condition: service_healthy
       broker:
         condition: service_healthy
+<<<<<<< HEAD
     networks:
       - backend
       - broker_net
@@ -107,3 +446,314 @@ networks:
   backend:
   frontend:
   broker_net:
+=======
+
+
+  # ===========================================================================
+  # FRONT - Serveur HTTP Nginx de façade (alpine = distribution minimale)
+  # ===========================================================================
+  # Rôle : point d'entrée unique des clients (port 80). Sert les fichiers
+  #        statiques du build React et fait office de reverse proxy vers
+  #        restapi (HTTP/REST) et wsapi (HTTP + WebSocket).
+  # ===========================================================================
+  front:
+
+    # Image Nginx Alpine (CDC : "distribution minimale de sécurité (alpine)").
+    # Alpine = ~5 Mo, surface d'attaque minimale.
+    image: nginx:alpine
+
+    # Redémarrage automatique (CDC).
+    restart: unless-stopped
+
+    networks:
+      # app_network uniquement : nginx n'a PAS besoin d'accéder directement aux
+      # BDs ou au broker (isolation réseau CDC).
+      - app_network
+
+    ports:
+      # Port 80 exposé publiquement (HTTP). Seul port ouvert sur l'hôte.
+      # Moindre privilège sur les ports (CDC) : on n'expose pas d'autres ports.
+      - "80:80"
+
+    volumes:
+      # Configuration Nginx de PRODUCTION (adaptée pour Docker avec les noms
+      # de services restapi et wsapi). Monté en lecture seule.
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+
+      # Volume partagé avec webapp : contient le build React/Webpack.
+      # Monté en LECTURE SEULE pour nginx (il ne doit qu'envoyer les fichiers,
+      # jamais les modifier). CDC : "lecture seule si pas de besoin en écriture".
+      # CDC : "Il est nécessaire de s'assurer que cet espace soit performant."
+      # → Volume nommé Docker (plus rapide qu'un bind mount hôte).
+      - webapp_dist:/var/www/app:ro
+
+    # ---- Vérification de santé ----
+    # wget -qO- : requête GET silencieuse sur /health (endpoint dédié nginx).
+    # L'endpoint /health retourne immédiatement 200 JSON sans passer par les APIs.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 10s
+      timeout:  10s
+      retries:  10
+      start_period: 10s
+
+    # ---- Dépendances ----
+    # CDC : "Le front ne doit se lancer que si les 2 api sont lancées."
+    # service_started (pas service_healthy) : front peut démarrer dès que les
+    # APIs sont lancées (nginx gère les backends indisponibles temporairement).
+    depends_on:
+      restapi:
+        condition: service_started
+      wsapi:
+        condition: service_started
+
+
+  # ===========================================================================
+  # WEBAPP - Builder React/Webpack (profil "build", exécution unique)
+  # ===========================================================================
+  # Rôle : construire l'application cliente React en fichiers statiques.
+  # CDC : "ne pas faire d'image personnalisée, monter le code-source par un
+  #        point de montage [...] doit pouvoir être exécuté rapidement suite à
+  #        une modification du code-source."
+  # NE PAS lancer avec `docker compose up` (profil "build" = protection).
+  # Lancer avec : docker compose --profile build run --rm webapp
+  # ===========================================================================
+  webapp:
+
+    # Image Node.js 22 Alpine (CDC : "Node.js ≥ 22 nécessaire pour le build").
+    image: node:22-alpine
+
+    # Profil "build" : ce service n'est PAS démarré par `docker compose up`.
+    # Il faut explicitement spécifier --profile build pour l'activer.
+    # CDC : "un profil doit être prévu pour ne pas le lancer malencontreusement".
+    profiles:
+      - build
+
+    volumes:
+      # Source React montée en lecture-écriture (npm crée node_modules/ ici).
+      - ./LogisticoTrain_codebase/app:/app:rw
+
+      # Volume partagé avec front : webpack écrit le build dans /app/dist.
+      # Ce volume est LU par front en lecture seule.
+      # CDC : "Le résultat du build doit être automatiquement accessible, en
+      #        lecture seule, par le service front."
+      # CDC : "Il est nécessaire de s'assurer que ce build soit persistant."
+      # → Volume nommé = persistant et performant.
+      - webapp_dist:/app/dist
+
+    working_dir: /app
+
+    # Installation des dépendances npm puis build de production via webpack.prod.js
+    # (script "build" défini dans package.json pointe vers webpack.prod.js).
+    command: ["sh", "-c", "npm install && npm run build"]
+
+    # CDC : "S'il n'y a pas besoin d'un réseau bridge 'par défaut' pour la pile
+    #        docker compose, réutilisez le réseau bridge par défaut de Docker
+    #        pour le builder."
+    # network_mode: bridge = réseau bridge natif Docker (docker0), PAS le réseau
+    # créé par Compose. Ce service ne communique avec aucun autre service,
+    # il a juste besoin d'internet pour npm install.
+    network_mode: bridge
+
+
+  # ===========================================================================
+  # PHPMYADMIN - Interface web d'administration MariaDB (profil "dev-tool")
+  # ===========================================================================
+  # CDC : "permettre d'accéder rapidement et facilement aux bases de données"
+  #        "accessible directement depuis leur port d'accès, pas à travers nginx"
+  #        "accessible que depuis la machine locale"
+  # ===========================================================================
+  phpmyadmin:
+
+    image: phpmyadmin/phpmyadmin:latest
+
+    # Profil "dev-tool" : uniquement avec --profile dev-tool
+    profiles:
+      - dev-tool
+
+    networks:
+      # db_network : accès à sqldatabase. PAS dans app_network → non accessible
+      # via nginx (CDC : "pas à travers le serveur front nginx").
+      - db_network
+
+    ports:
+      # 127.0.0.1: → expose UNIQUEMENT sur localhost de la machine hôte.
+      # CDC : "accessible que depuis la machine locale".
+      # Pas d'exposition publique (0.0.0.0).
+      - "127.0.0.1:8081:80"
+
+    environment:
+      # Adresse du serveur MariaDB (nom de service Docker Compose).
+      PMA_HOST: sqldatabase
+      PMA_PORT: 3306
+      # Pas de PMA_USER/PMA_PASSWORD : l'utilisateur entre ses credentials
+      # manuellement sur la page de connexion phpmyadmin (plus sécurisé,
+      # et phpmyadmin ne supporte pas les variables *_FILE).
+
+
+  # ===========================================================================
+  # MONGO-EXPRESS - Interface web d'administration MongoDB (profil "dev-tool")
+  # ===========================================================================
+  mongo-express:
+
+    image: mongo-express:latest
+
+    profiles:
+      - dev-tool
+
+    networks:
+      # db_network uniquement. PAS dans app_network → non accessible via nginx.
+      - db_network
+
+    ports:
+      # 127.0.0.1: → localhost seulement (CDC : "machine locale uniquement").
+      - "127.0.0.1:8082:8081"
+
+    environment:
+      # Adresse du serveur MongoDB (nom de service Docker Compose).
+      ME_CONFIG_MONGODB_SERVER: nosqldatabase
+      ME_CONFIG_MONGODB_PORT:   27017
+      # NOTE : mongo-express ne supporte pas les variables *_FILE pour les
+      # credentials MongoDB. Conformément à la règle CDC, les credentials sont
+      # fournis via env_file (fichier externe, pas dans docker-compose.yml).
+      # Ce fichier est dans secrets/ car il contient les identifiants root Mongo.
+    env_file:
+      - ./secrets/mongo-express.env
+
+    # mongo-express doit attendre que MongoDB soit prêt.
+    depends_on:
+      nosqldatabase:
+        condition: service_healthy
+
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+# CDC : "Aucun volume de données anonyme ne doit être créé."
+# Tous les volumes sont NOMMÉS (déclarés ici).
+# Les volumes nommés Docker sont plus PERFORMANTS que les bind mounts car
+# ils sont gérés directement par le daemon Docker sans passer par la couche
+# de virtualisation du filesystem hôte.
+# =============================================================================
+volumes:
+
+  # Données persistantes de MariaDB (tables voie, rames, taches)
+  mariadb_data:
+    driver: local
+
+  # Données persistantes de MongoDB (collection history-db)
+  mongodb_data:
+    driver: local
+
+  # Données persistantes de RabbitMQ (queues, exchanges persistés)
+  rabbitmq_data:
+    driver: local
+
+  # Cache Maven (.m2/repository) pour wsapi : évite de re-télécharger les
+  # dépendances JAR à chaque recompilation. Gain de temps significatif.
+  # CDC : "espace de stockage persistant et performant" pour le cache maven.
+  maven_cache:
+    driver: local
+
+  # Dossier target/ de wsapi : contient les .class et le JAR compilé.
+  # Séparé du bind mount source pour des I/O plus rapides lors de la compilation.
+  # CDC : "espace également persistant et performant" pour target/.
+  wsapi_target:
+    driver: local
+
+  # Build React produit par webapp, consommé par front en lecture seule.
+  # CDC : "build persistant" + "performances en lecture et en écriture optimisées".
+  # Volume nommé local = solution optimale (persistant + performant).
+  webapp_dist:
+    driver: local
+
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
+# CDC : "Isolation réseau : segmentation des réseaux pour ne laisser un accès
+#        aux bases de données qu'aux services qui en ont le besoin, et de même
+#        pour le broker."
+#
+# db_network     : sqldatabase + nosqldatabase + restapi + wsapi + phpmyadmin
+#                  + mongo-express (accès BDs restreint à ces services)
+# broker_network : broker + wsapi (accès broker restreint à wsapi uniquement)
+# app_network    : restapi + wsapi + front (communication APIs ↔ nginx)
+# =============================================================================
+networks:
+
+  # Réseau des bases de données : isolé, seules les APIs et les outils dev
+  # peuvent accéder aux BDs.
+  db_network:
+    driver: bridge
+
+  # Réseau du broker : isolé, seul wsapi communique avec RabbitMQ.
+  broker_network:
+    driver: bridge
+
+  # Réseau applicatif : nginx reverse-proxy vers les deux APIs.
+  app_network:
+    driver: bridge
+
+
+# =============================================================================
+# SECRETS
+# =============================================================================
+# CDC : "On ne veut pas inscrire les identifiants directement dans docker-compose.yml"
+# Tous les secrets sont des fichiers externes dans le dossier secrets/.
+# Ce dossier doit être protégé (.gitignore, permissions restreintes).
+# Les secrets sont montés en lecture seule dans /run/secrets/<nom> du conteneur.
+# =============================================================================
+secrets:
+
+  # --- MariaDB ---
+  mariadb_root_password:
+    file: ./secrets/mariadb_root_password.txt
+  mariadb_user:
+    file: ./secrets/mariadb_user.txt
+  mariadb_password:
+    file: ./secrets/mariadb_password.txt
+  mariadb_database:
+    file: ./secrets/mariadb_database.txt
+
+  # --- MongoDB ---
+  mongo_root_user:
+    file: ./secrets/mongo_root_user.txt
+  mongo_root_password:
+    file: ./secrets/mongo_root_password.txt
+  mongo_app_user:
+    file: ./secrets/mongo_app_user.txt
+  mongo_app_password:
+    file: ./secrets/mongo_app_password.txt
+
+  # --- RabbitMQ ---
+  broker_user:
+    file: ./secrets/broker_user.txt
+  broker_password:
+    file: ./secrets/broker_password.txt
+  # Fichier de configuration STOMP complet (contient les credentials STOMP).
+  # Monté directement sur /etc/rabbitmq/conf.d/30-stomp.conf via `target`.
+  rabbitmq_stomp_conf:
+    file: ./secrets/rabbitmq_stomp.conf
+
+  # --- RESTApi ---
+  restapi_config:
+    file: ./secrets/restapi_config.py
+
+  # --- RealtimeApi ---
+  wsapi_application_properties:
+    file: ./secrets/wsapi_application.properties
+
+
+# =============================================================================
+# CONFIGS
+# =============================================================================
+# Les configs sont pour les fichiers de configuration NON sensibles
+# (pas de credentials). Elles sont aussi montées en lecture seule.
+# =============================================================================
+configs:
+
+  # Liste des plugins RabbitMQ à activer (pas de credentials = config, pas secret)
+  rabbitmq_enabled_plugins:
+    file: ./config/rabbitmq/enabled_plugins
+>>>>>>> Claude
