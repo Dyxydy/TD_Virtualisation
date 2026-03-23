@@ -1,28 +1,6 @@
--- =============================================================================
--- Script d'initialisation du schéma de production MariaDB - Logistico-Train
--- =============================================================================
--- Ce script est exécuté AUTOMATIQUEMENT par le conteneur MariaDB au PREMIER
--- démarrage seulement (si /var/lib/mysql est vide), via le mécanisme
--- /docker-entrypoint-initdb.d/ de l'image officielle MariaDB.
--- Il n'est PAS rejoué si le volume de données existe déjà.
--- =============================================================================
--- Encodage : utf8mb4 (support complet Unicode + emojis) avec collation
--- utf8mb4_general_ci (insensible à la casse, requis par le README RESTApi).
--- =============================================================================
 
--- Sélectionne la base de données créée par la variable MARIADB_DATABASE_FILE.
--- Le nom 'myrames-prod-db' est celui attendu par config.py et application.properties.
 USE `myrames-prod-db`;
 
--- =============================================================================
--- TABLE : voie
--- =============================================================================
--- Représente les voies physiques du centre de maintenance.
--- num_voie  : identifiant entier de la voie (PK), choisi par l'opérateur.
--- interdite : booléen (TINYINT 0/1) indiquant si la voie est hors service
---             (travaux, problème d'accès). Indépendant du fait qu'une rame
---             l'occupe ou non (une voie peut être libre ET interdite).
--- =============================================================================
 CREATE TABLE IF NOT EXISTS `voies` (
     `num_voie`  INT(11)     NOT NULL,
     `interdite` TINYINT(1)  NOT NULL,
