@@ -23,7 +23,7 @@ USE `myrames-prod-db`;
 --             (travaux, problème d'accès). Indépendant du fait qu'une rame
 --             l'occupe ou non (une voie peut être libre ET interdite).
 -- =============================================================================
-CREATE TABLE IF NOT EXISTS `voie` (
+CREATE TABLE IF NOT EXISTS `voies` (
     `num_voie`  INT(11)     NOT NULL,
     `interdite` TINYINT(1)  NOT NULL,
     PRIMARY KEY (`num_voie`)
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS `rames` (
     UNIQUE KEY  `uq_rame_voie` (`voie`),
     CONSTRAINT  `fk_rame_voie`
         FOREIGN KEY (`voie`)
-        REFERENCES `voie` (`num_voie`)
+        REFERENCES `voies` (`num_voie`)
         -- ON DELETE RESTRICT : impossible de supprimer une voie occupée
         ON DELETE RESTRICT
         ON UPDATE CASCADE
@@ -70,12 +70,12 @@ CREATE TABLE IF NOT EXISTS `rames` (
 -- tache          : description textuelle de la tâche (TEXT = jusqu'à 65 535 oct).
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS `taches` (
-    `num_serie_rame` VARCHAR(12) NOT NULL,
-    `num_tache`      INT(11)     NOT NULL,
-    `tache`          TEXT        NOT NULL,
-    PRIMARY KEY (`num_serie_rame`, `num_tache`),
+    `num_serie`  VARCHAR(12) NOT NULL,
+    `num_tache`  INT(11)     NOT NULL,
+    `tache`      TEXT        NOT NULL,
+    PRIMARY KEY (`num_serie`, `num_tache`),
     CONSTRAINT `fk_tache_rame`
-        FOREIGN KEY (`num_serie_rame`)
+        FOREIGN KEY (`num_serie`)
         REFERENCES `rames` (`num_serie`)
         -- ON DELETE CASCADE : supprimer une rame supprime aussi toutes ses tâches
         ON DELETE CASCADE

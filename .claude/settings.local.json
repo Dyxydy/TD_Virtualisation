@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose:*)",
+      "Bash(docker volume:*)",
+      "Bash(xargs grep:*)",
+      "Bash(python -c \"import sys,json; h=json.load\\(sys.stdin\\); print\\(''''Status:'''', h[''''Status'''']\\); [print\\(f\"\"[{l[''''Start'''']}] Exit:{l[''''ExitCode'''']} Output:{l[''''Output''''][:200]}\"\"\\) for l in h.get\\(''''Log'''', []\\)[-3:]]\")",
+      "Bash(xxd \"c:/Users/baptm/Documents/TDRemi/TD_Virtualisation/secrets/mongo_root_user.txt\")",
+      "Bash(xxd \"c:/Users/baptm/Documents/TDRemi/TD_Virtualisation/secrets/mongo_root_password.txt\")",
+      "Bash(docker exec:*)",
+      "Bash(xxd \"c:/Users/baptm/Documents/TDRemi/TD_Virtualisation/config/mongodb/init-mongo.sh\")",
+      "Bash(curl -s http://localhost/health)",
+      "Bash(curl -s http://localhost/api/voies)",
+      "Bash(curl -s http://localhost/api/track)",
+      "Bash(curl -s \"http://localhost/wsapi/rame\")",
+      "Bash(curl -s http://localhost/api/v1/voies)",
+      "Bash(python -m json.tool)",
+      "Bash(curl -s -X POST http://localhost/api/v1/voies -H \"Content-Type: application/json\" -d \"{\"\"numVoie\"\": 1, \"\"interdite\"\": false}\")",
+      "Bash(curl -s -X POST http://localhost/api/v1/voies -H \"Content-Type: application/json\" -d \"{\"\"numVoie\"\": 3, \"\"interdite\"\": false}\")",
+      "Bash(curl -s -X POST http://localhost/api/v1/voies -H \"Content-Type: application/json\" -d \"{\"\"numVoie\"\": 4, \"\"interdite\"\": false}\")",
+      "Bash(xargs ls:*)"
+    ]
+  }
+}

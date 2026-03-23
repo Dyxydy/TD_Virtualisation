@@ -140,20 +140,22 @@ services:
       # depuis /run/secrets/ (pas de convention *_FILE pour les users perso).
 
     # ---- Vérification de santé ----
-    # mongosh --eval "db.adminCommand('ping')" : commande ping officielle
-    # MongoDB qui vérifie que le serveur répond aux commandes.
-    # --quiet : supprime la bannière mongosh pour un output propre.
+    # Utilise les credentials root pour le ping (MongoDB 6 requiert l'auth).
+    # Les fichiers secrets sont lisibles par root (mode 0440).
     healthcheck:
       test:
-        - CMD
-        - mongosh
-        - --eval
-        - "db.adminCommand('ping').ok"
-        - --quiet
+        - CMD-SHELL
+        - >
+          mongosh
+          --username "$(cat /run/secrets/mongo_root_user)"
+          --password "$(cat /run/secrets/mongo_root_password)"
+          --authenticationDatabase admin
+          --eval "db.adminCommand('ping').ok"
+          --quiet
       interval: 10s
       timeout:  10s
       retries:  10
-      start_period: 30s
+      start_period: 60s
 
 
   # ===========================================================================
@@ -195,27 +197,14 @@ services:
         mode: 0440
 
     secrets:
-      # Credentials de l'utilisateur par défaut RabbitMQ (management).
-      # L'image officielle supporte RABBITMQ_DEFAULT_USER_FILE et
-      # RABBITMQ_DEFAULT_PASS_FILE pour éviter les credentials en clair.
-      - broker_user      # → /run/secrets/broker_user
-      - broker_password  # → /run/secrets/broker_password
-
-      # Configuration STOMP : ce fichier CONTIENT les credentials STOMP
-      # (stomp.default_user / stomp.default_pass). Il ne peut pas externaliser
-      # ces valeurs individuellement (format conf RabbitMQ), donc TOUT le fichier
-      # est traité comme un SECRET (règle CDC).
-      # Il est monté directement dans /etc/rabbitmq/conf.d/ (Docker Compose
-      # permet de choisir le chemin cible d'un secret via `target`).
+      # Configuration STOMP + credentials du user par défaut RabbitMQ.
+      # Depuis RabbitMQ 3.12, RABBITMQ_DEFAULT_USER_FILE/_PASS_FILE sont dépréciés
+      # et provoquent une erreur fatale. Les credentials doivent être dans un
+      # fichier de conf (conf.d/). Ce fichier contient à la fois default_user/pass
+      # et stomp.default_user/pass, donc TOUT le fichier est traité comme un SECRET.
       - source: rabbitmq_stomp_conf
         target: /etc/rabbitmq/conf.d/30-stomp.conf
         mode: 0440
-
-    environment:
-      # Variables *_FILE lues par l'entrypoint de l'image RabbitMQ officielle
-      # pour créer l'utilisateur par défaut sans l'écrire en clair ici.
-      RABBITMQ_DEFAULT_USER_FILE: /run/secrets/broker_user
-      RABBITMQ_DEFAULT_PASS_FILE: /run/secrets/broker_password
 
     # ---- Vérification de santé ----
     # rabbitmq-diagnostics check_port_connectivity : vérifie que RabbitMQ écoute
@@ -415,8 +404,9 @@ services:
   # ===========================================================================
   webapp:
 
-    # Image Node.js 22 Alpine (CDC : "Node.js ≥ 22 nécessaire pour le build").
-    image: node:22-alpine
+    # Image Node.js 22 Debian (node-sass nécessite python3/gcc pour compiler,
+    # absents de l'image Alpine. L'image Debian inclut les build tools nécessaires).
+    image: node:22
 
     # Profil "build" : ce service n'est PAS démarré par `docker compose up`.
     # Il faut explicitement spécifier --profile build pour l'activer.
@@ -428,15 +418,22 @@ services:
       # Source React montée en lecture-écriture (npm crée node_modules/ ici).
       - ./LogisticoTrain_codebase/app:/app:rw
 
-      # Volume partagé avec front : webpack écrit le build dans /app/dist.
+      # Volume partagé avec front : webpack écrit le build dans /app/build.
       # Ce volume est LU par front en lecture seule.
       # CDC : "Le résultat du build doit être automatiquement accessible, en
       #        lecture seule, par le service front."
       # CDC : "Il est nécessaire de s'assurer que ce build soit persistant."
       # → Volume nommé = persistant et performant.
-      - webapp_dist:/app/dist
+      - webapp_dist:/app/build
 
     working_dir: /app
+
+    # Variables d'environnement injectées dans le build webpack via DefinePlugin.
+    # API_EP_URI     : URL de base de la REST API, via nginx (port 80).
+    # RT_API_EP_URI  : URL de base de la RealTime API (WebSocket), via nginx (port 80).
+    environment:
+      API_EP_URI:    "http://localhost/api/v1"
+      RT_API_EP_URI: "http://localhost/wsapi"
 
     # Installation des dépendances npm puis build de production via webpack.prod.js
     # (script "build" défini dans package.json pointe vers webpack.prod.js).
