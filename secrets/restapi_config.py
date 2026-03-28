@@ -18,7 +18,7 @@ MONGODB_SETTINGS = {
     "db": "history-db",
     "host": "nosqldatabase",
     "port": 27017,
-    "username": "mongoUsr",
-    "password": "mongoPwd",
-    "authentication_source": "history-db"
+    "username": "mongoRoot",
+    "password": "mongoPwdRoot",
+    "authentication_source": "admin"
 }
